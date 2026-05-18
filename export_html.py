@@ -15,6 +15,23 @@ def generate_html_report(html_path, output_dir=None):
     analyzer = HTMLJSAnalyzer(html_path)
     report = analyzer.analyze()
     
+    # --- 🔥 補上遺漏的：雜訊過濾機制 ---
+    cleaned_functions = {}
+    for name, func in report.functions.items():
+        is_anonymous = name.startswith("anonymous@")
+        has_effects = len(func.side_effects) > 0
+        has_calls = len(func.calls) > 0
+        
+        # 如果是匿名函式，且沒有副作用、也沒呼叫其他函式，就過濾掉
+        if is_anonymous and not has_effects and not has_calls:
+            continue
+            
+        cleaned_functions[name] = func
+    
+    # 將過濾後的乾淨清單存回 report
+    report.functions = cleaned_functions
+    # ------------------------------------
+    
     # 決定輸出路徑
     base_name = os.path.splitext(os.path.basename(html_path))[0]
     if not output_dir:
@@ -56,7 +73,7 @@ def generate_html_report(html_path, output_dir=None):
         "storage": "🗄️", "sensitive": "📋", "dynamic": "🔗"
     }
 
-    # 3. 組合 HTML 結構 (更新 Tab CSS 隱藏方式)
+    # 3. 組合 HTML 結構
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -108,25 +125,9 @@ def generate_html_report(html_path, output_dir=None):
             font-weight: bold;
         }}
         
-        /* 🔥 修復 Mermaid 繪製問題：使用離屏渲染取代 display: none */
-        .tab-container {{
-            position: relative;
-            width: 100%;
-        }}
-        .tab-content {{ 
-            position: absolute; 
-            left: -9999px; 
-            top: -9999px; 
-            visibility: hidden; 
-            width: 100%;
-        }}
-        .tab-content.active {{ 
-            position: relative; 
-            left: 0; 
-            top: 0; 
-            visibility: visible; 
-            animation: fadeIn 0.3s; 
-        }}
+        /* 🔥 改回最單純的 display: none，交給 JS 處理渲染時機 */
+        .tab-content {{ display: none; }}
+        .tab-content.active {{ display: block; animation: fadeIn 0.3s; }}
         @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
 
         .header-panel {{
@@ -198,36 +199,35 @@ def generate_html_report(html_path, output_dir=None):
         <button class="tab-btn" onclick="switchTab('tab-flowchart', this)">流程圖 (Mermaid)</button>
     </div>
 
-    <div class="tab-container">
-        <div id="tab-report" class="tab-content active">
-            <div class="header-panel">
-                <div class="summary-grid">
-                    <div class="stat-box">
-                        <div>函式總數</div>
-                        <div class="number">{len(report.functions)}</div>
-                    </div>
-                    <div class="stat-box {'danger' if side_effect_funcs else ''}">
-                        <div>含副作用函式</div>
-                        <div class="number">{len(side_effect_funcs)}</div>
-                    </div>
-                    <div class="stat-box {'danger' if report.warnings else ''}">
-                        <div>整檔警告</div>
-                        <div class="number">{len(report.warnings)}</div>
-                    </div>
+    <div id="tab-report" class="tab-content active">
+        <div class="header-panel">
+            <div class="summary-grid">
+                <div class="stat-box">
+                    <div>函式總數</div>
+                    <div class="number">{len(report.functions)}</div>
                 </div>
-
-                {f'''
-                <div style="margin-top: 20px;">
-                    <h3>⚠️ 整檔警告</h3>
-                    <ul class="warnings-list">
-                        {"".join(f"<li>{w}</li>" for w in report.warnings)}
-                    </ul>
+                <div class="stat-box {'danger' if side_effect_funcs else ''}">
+                    <div>含副作用函式</div>
+                    <div class="number">{len(side_effect_funcs)}</div>
                 </div>
-                ''' if report.warnings else ''}
+                <div class="stat-box {'danger' if report.warnings else ''}">
+                    <div>整檔警告</div>
+                    <div class="number">{len(report.warnings)}</div>
+                </div>
             </div>
 
-            <h2>函式詳細清單</h2>
-            <div class="func-list">
+            {f'''
+            <div style="margin-top: 20px;">
+                <h3>⚠️ 整檔警告</h3>
+                <ul class="warnings-list">
+                    {"".join(f"<li>{w}</li>" for w in report.warnings)}
+                </ul>
+            </div>
+            ''' if report.warnings else ''}
+        </div>
+
+        <h2>函式詳細清單</h2>
+        <div class="func-list">
 """
     
     for func in report.functions.values():
@@ -240,33 +240,35 @@ def generate_html_report(html_path, output_dir=None):
         caller_str = ", ".join(callers) if callers else "無"
         
         html_content += f'''
-                <div class="{card_class}">
-                    <div class="func-name">
-                        {icon_str} {func.name}()
-                        { '<span class="tag risk-tag">含風險</span>' if is_risk else ''}
-                    </div>
-                    <div class="func-meta">位置：第 {func.start_line} - {func.end_line} 行</div>
-                    <div><strong>呼叫其他函式：</strong> {calls}</div>
-                    <div><strong>被誰呼叫：</strong> {caller_str}</div>
-                    <div style="margin-top: 8px;">
-                        <strong>副作用：</strong> 
-                        { "".join(f'<span class="tag risk-tag">{se}</span>' for se in func.side_effects) if func.side_effects else '<span class="tag">無</span>' }
-                    </div>
+            <div class="{card_class}">
+                <div class="func-name">
+                    {icon_str} {func.name}()
+                    { '<span class="tag risk-tag">含風險</span>' if is_risk else ''}
                 </div>
+                <div class="func-meta">位置：第 {func.start_line} - {func.end_line} 行</div>
+                <div><strong>呼叫其他函式：</strong> {calls}</div>
+                <div><strong>被誰呼叫：</strong> {caller_str}</div>
+                <div style="margin-top: 8px;">
+                    <strong>副作用：</strong> 
+                    { "".join(f'<span class="tag risk-tag">{se}</span>' for se in func.side_effects) if func.side_effects else '<span class="tag">無</span>' }
+                </div>
+            </div>
         '''
 
     html_content += f"""
-            </div>
         </div>
+    </div>
 
-        <div id="tab-flowchart" class="tab-content">
-            <div class="mermaid-container">
-                <pre class="mermaid">
+    <div id="tab-flowchart" class="tab-content">
+        <div class="mermaid-container">
+            <pre id="mermaid-graph" style="display: none;">
 {mermaid_str}
-                </pre>
-            </div>
+            </pre>
+            <div id="mermaid-output"></div>
         </div>
-    </div> <footer style="margin-top: 40px; text-align: center; color: #adb5bd; font-size: 0.9em;">
+    </div>
+
+    <footer style="margin-top: 40px; text-align: center; color: #adb5bd; font-size: 0.9em;">
         免責聲明：此工具僅為輔助審查用途，基於靜態分析，無法保證偵測所有動態行為或繞過手法。
     </footer>
 
@@ -274,14 +276,40 @@ def generate_html_report(html_path, output_dir=None):
         function switchTab(tabId, btnElement) {{
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            
             document.getElementById(tabId).classList.add('active');
             btnElement.classList.add('active');
+            
+            // 🔥 當切換到圖表頁籤時，呼叫 Mermaid 進行延遲渲染
+            if (tabId === 'tab-flowchart' && window.renderMermaidGraph) {{
+                // 給一點點微小延遲，確保 DOM 的 display: block 已經生效
+                setTimeout(window.renderMermaidGraph, 50);
+            }}
         }}
     </script>
 
     <script type="module">
         import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({{ startOnLoad: true, theme: 'base' }});
+        
+        // 關閉自動渲染
+        mermaid.initialize({{ startOnLoad: false, theme: 'base' }});
+        
+        // 建立一個全域函式供頁籤點擊時呼叫
+        window.renderMermaidGraph = async function() {{
+            const outputDiv = document.getElementById('mermaid-output');
+            
+            // 確保只渲染一次，不要重複浪費效能
+            if (!outputDiv.hasAttribute('data-rendered')) {{
+                const graphDefinition = document.getElementById('mermaid-graph').textContent;
+                try {{
+                    const {{ svg }} = await mermaid.render('mermaid-svg', graphDefinition);
+                    outputDiv.innerHTML = svg;
+                    outputDiv.setAttribute('data-rendered', 'true');
+                }} catch (error) {{
+                    outputDiv.innerHTML = '<div style="color:red">圖表渲染失敗: ' + error.message + '</div>';
+                }}
+            }}
+        }};
     </script>
 </body>
 </html>
