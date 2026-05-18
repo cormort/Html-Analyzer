@@ -1,14 +1,10 @@
 ---
-title: Html Analyzer
-emoji: 🌖
-colorFrom: red
-colorTo: red
+title: HTML/JS 安全與結構分析工具
+emoji: 🔍
+colorFrom: blue
+colorTo: green
 sdk: gradio
-sdk_version: 6.14.0
-python_version: '3.13'
 app_file: app.py
 pinned: false
-license: apache-2.0
+python_version: 3.10
 ---
-
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
