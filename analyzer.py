@@ -140,26 +140,36 @@ class Exporter:
             f"# 分析報告：{self.report.html_file}",
             "\n## 整體摘要",
             f"- 函式總數：{len(self.report.functions)}",
-            f"- 含副作用函式：{len(side_effect_funcs)}",
+            f"- 含副作用函式：**{len(side_effect_funcs)}**",
             f"- 整檔警告：{len(self.report.warnings)}",
         ]
 
         if self.report.warnings:
             lines.append("\n## 整檔警告")
             for w in self.report.warnings:
-                lines.append(f"- ⚠️ {w}")
+                lines.append(f"- ⚠️ **{w}**")
 
         lines.append("\n## 函式清單")
         for func in self.report.functions.values():
             icon_str = "".join([self.icons.get(se, "") for se in func.side_effects])
-            lines.append(f"\n### {icon_str} {func.name}")
+            
+            # --- 強化：針對有副作用的函式加上醒目標示 ---
+            if func.side_effects:
+                lines.append(f"\n### 🚨 <mark>{icon_str} {func.name} (含風險)</mark>")
+            else:
+                lines.append(f"\n### {func.name}")
+                
             lines.append(f"- 位置：第 {func.start_line}-{func.end_line} 行")
             
             calls = ", ".join(func.calls) if func.calls else "無"
             lines.append(f"- 呼叫：{calls}")
             
-            effects = ", ".join(func.side_effects) if func.side_effects else "無"
-            lines.append(f"- 副作用：{effects}")
+            # --- 強化：凸顯副作用文字 ---
+            if func.side_effects:
+                effects = ", ".join(func.side_effects)
+                lines.append(f"- **副作用：{effects}** ⚠️")
+            else:
+                lines.append(f"- 副作用：無")
             
             callers = [f.name for f in self.report.functions.values() if func.name in f.calls]
             caller_str = ", ".join(callers) if callers else "無"
@@ -174,32 +184,42 @@ class Exporter:
         path = os.path.join(self.output_dir, f"{self.base_name}.flow.mmd")
         lines = ["flowchart TD"]
         
+        # 輔助函式：確保 ID 不含 Mermaid 不允許的特殊符號 (<, >, @, :)
+        import re
+        def sanitize_id(name):
+            return re.sub(r'[^a-zA-Z0-9]', '_', name)
+            
+        def sanitize_label(name):
+            return name.replace('<', '&lt;').replace('>', '&gt;')
+        
         for func in self.report.functions.values():
-            # 定義節點與樣式類別
-            classes = ",".join(func.side_effects)
-            node_def = f'    {func.name}["{func.name}()"]'
-            if classes:
-                # 簡單取第一個副作用做為主要顏色標記
+            # 使用清理過的 ID 建立節點
+            safe_id = sanitize_id(func.name)
+            safe_label = sanitize_label(func.name)
+            
+            node_def = f'    {safe_id}["{safe_label}()"]'
+            
+            if func.side_effects:
                 primary_class = list(func.side_effects)[0]
                 node_def += f":::{primary_class}"
             lines.append(node_def)
             
-            # 定義連線
+            # 建立連線時也必須使用清理過的 ID
             for call in func.calls:
-                # 僅繪製有在本地定義的函式關係，減少雜訊
                 if call in self.report.functions:
-                    lines.append(f"    {func.name} --> {call}")
+                    safe_call_id = sanitize_id(call)
+                    lines.append(f"    {safe_id} --> {safe_call_id}")
 
-        # 加入樣式定義
+        # --- 強化：增加框線厚度 (stroke-width:3px) 與字體顏色，讓圖表上的風險節點更顯眼 ---
         lines.extend([
             "",
-            "    classDef network fill:#fee,stroke:#c00",
-            "    classDef execution fill:#fee,stroke:#c00",
-            "    classDef dom fill:#fef,stroke:#90c",
-            "    classDef storage fill:#eef,stroke:#36c",
-            "    classDef sensitive fill:#ffe,stroke:#c90",
-            "    classDef dynamic fill:#efe,stroke:#090"
+            "    classDef network fill:#fee,stroke:#c00,stroke-width:3px,color:#000",
+            "    classDef execution fill:#fee,stroke:#c00,stroke-width:3px,color:#000",
+            "    classDef dom fill:#fef,stroke:#90c,stroke-width:3px,color:#000",
+            "    classDef storage fill:#eef,stroke:#36c,stroke-width:3px,color:#000",
+            "    classDef sensitive fill:#ffe,stroke:#c90,stroke-width:3px,color:#000",
+            "    classDef dynamic fill:#efe,stroke:#090,stroke-width:3px,color:#000"
         ])
         
         with open(path, 'w', encoding='utf-8') as f:
-            f.write("\n".join(lines))
+            f.write("\n".join(lines))  
