@@ -21,7 +21,7 @@ def generate_html_report(html_path, output_dir=None):
         output_dir = os.path.dirname(os.path.abspath(html_path))
     output_path = os.path.join(output_dir, f"{base_name}_report.html")
 
-    # 1. 產生 Mermaid 字串 (與 analyzer.py 邏輯一致)
+    # 1. 產生 Mermaid 字串
     mermaid_lines = ["flowchart TD"]
     for func in report.functions.values():
         safe_id = sanitize_id(func.name)
@@ -56,7 +56,7 @@ def generate_html_report(html_path, output_dir=None):
         "storage": "🗄️", "sensitive": "📋", "dynamic": "🔗"
     }
 
-    # 3. 組合 HTML 結構
+    # 3. 組合 HTML 結構 (加入 Tab 樣式與邏輯)
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -72,6 +72,7 @@ def generate_html_report(html_path, output_dir=None):
             --danger-bg: #fff5f5;
             --danger-border: #ffc9c9;
             --danger-text: #e03131;
+            --primary-color: #f97316; /* 呼應 Gradio 的橘色系 */
         }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -83,6 +84,37 @@ def generate_html_report(html_path, output_dir=None):
             margin: 0 auto;
         }}
         h1, h2, h3 {{ color: #212529; }}
+        
+        /* 頁籤導覽列樣式 */
+        .tab-nav {{
+            display: flex;
+            border-bottom: 2px solid var(--border-color);
+            margin-bottom: 20px;
+        }}
+        .tab-btn {{
+            background: none;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            cursor: pointer;
+            color: #6c757d;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s ease;
+        }}
+        .tab-btn:hover {{ color: #495057; }}
+        .tab-btn.active {{
+            color: var(--primary-color);
+            border-bottom-color: var(--primary-color);
+            font-weight: bold;
+        }}
+        
+        /* 頁籤內容區塊 */
+        .tab-content {{ display: none; animation: fadeIn 0.3s; }}
+        .tab-content.active {{ display: block; }}
+        @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
+
+        /* 統計與卡片樣式 */
         .header-panel {{
             background: var(--card-bg);
             padding: 20px;
@@ -111,7 +143,6 @@ def generate_html_report(html_path, output_dir=None):
             padding: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            margin-bottom: 20px;
             overflow-x: auto;
             text-align: center;
         }}
@@ -146,45 +177,45 @@ def generate_html_report(html_path, output_dir=None):
 </head>
 <body>
 
-    <div class="header-panel">
-        <h1>🔍 分析報告：{report.html_file}</h1>
-        
-        <div class="summary-grid">
-            <div class="stat-box">
-                <div>函式總數</div>
-                <div class="number">{len(report.functions)}</div>
-            </div>
-            <div class="stat-box {'danger' if side_effect_funcs else ''}">
-                <div>含副作用函式</div>
-                <div class="number">{len(side_effect_funcs)}</div>
-            </div>
-            <div class="stat-box {'danger' if report.warnings else ''}">
-                <div>整檔警告</div>
-                <div class="number">{len(report.warnings)}</div>
-            </div>
-        </div>
+    <h1>🔍 分析報告：{report.html_file}</h1>
 
-        {f'''
-        <div style="margin-top: 20px;">
-            <h3>⚠️ 整檔警告</h3>
-            <ul class="warnings-list">
-                {"".join(f"<li>{w}</li>" for w in report.warnings)}
-            </ul>
-        </div>
-        ''' if report.warnings else ''}
+    <div class="tab-nav">
+        <button class="tab-btn active" onclick="switchTab('tab-report', this)">文字報告</button>
+        <button class="tab-btn" onclick="switchTab('tab-flowchart', this)">流程圖 (Mermaid)</button>
     </div>
 
-    <div class="mermaid-container">
-        <h2>呼叫關係圖</h2>
-        <pre class="mermaid">
-{mermaid_str}
-        </pre>
-    </div>
+    <div id="tab-report" class="tab-content active">
+        <div class="header-panel">
+            <div class="summary-grid">
+                <div class="stat-box">
+                    <div>函式總數</div>
+                    <div class="number">{len(report.functions)}</div>
+                </div>
+                <div class="stat-box {'danger' if side_effect_funcs else ''}">
+                    <div>含副作用函式</div>
+                    <div class="number">{len(side_effect_funcs)}</div>
+                </div>
+                <div class="stat-box {'danger' if report.warnings else ''}">
+                    <div>整檔警告</div>
+                    <div class="number">{len(report.warnings)}</div>
+                </div>
+            </div>
 
-    <h2>函式詳細清單</h2>
-    <div class="func-list">
+            {f'''
+            <div style="margin-top: 20px;">
+                <h3>⚠️ 整檔警告</h3>
+                <ul class="warnings-list">
+                    {"".join(f"<li>{w}</li>" for w in report.warnings)}
+                </ul>
+            </div>
+            ''' if report.warnings else ''}
+        </div>
+
+        <h2>函式詳細清單</h2>
+        <div class="func-list">
 """
     
+    # 組合函式清單 HTML
     for func in report.functions.values():
         is_risk = len(func.side_effects) > 0
         card_class = "func-card has-risk" if is_risk else "func-card"
@@ -195,31 +226,53 @@ def generate_html_report(html_path, output_dir=None):
         caller_str = ", ".join(callers) if callers else "無"
         
         html_content += f'''
-        <div class="{card_class}">
-            <div class="func-name">
-                {icon_str} {func.name}()
-                { '<span class="tag risk-tag">含風險</span>' if is_risk else ''}
+            <div class="{card_class}">
+                <div class="func-name">
+                    {icon_str} {func.name}()
+                    { '<span class="tag risk-tag">含風險</span>' if is_risk else ''}
+                </div>
+                <div class="func-meta">位置：第 {func.start_line} - {func.end_line} 行</div>
+                <div><strong>呼叫其他函式：</strong> {calls}</div>
+                <div><strong>被誰呼叫：</strong> {caller_str}</div>
+                <div style="margin-top: 8px;">
+                    <strong>副作用：</strong> 
+                    { "".join(f'<span class="tag risk-tag">{se}</span>' for se in func.side_effects) if func.side_effects else '<span class="tag">無</span>' }
+                </div>
             </div>
-            <div class="func-meta">位置：第 {func.start_line} - {func.end_line} 行</div>
-            <div><strong>呼叫其他函式：</strong> {calls}</div>
-            <div><strong>被誰呼叫：</strong> {caller_str}</div>
-            <div style="margin-top: 8px;">
-                <strong>副作用：</strong> 
-                { "".join(f'<span class="tag risk-tag">{se}</span>' for se in func.side_effects) if func.side_effects else '<span class="tag">無</span>' }
-            </div>
-        </div>
         '''
 
-    html_content += """
+    html_content += f"""
+        </div>
+    </div>
+
+    <div id="tab-flowchart" class="tab-content">
+        <div class="mermaid-container">
+            <pre class="mermaid">
+{mermaid_str}
+            </pre>
+        </div>
     </div>
 
     <footer style="margin-top: 40px; text-align: center; color: #adb5bd; font-size: 0.9em;">
         免責聲明：此工具僅為輔助審查用途，基於靜態分析，無法保證偵測所有動態行為或繞過手法。
     </footer>
 
+    <script>
+        function switchTab(tabId, btnElement) {{
+            // 隱藏所有內容區塊
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            // 移除所有按鈕的 active 狀態
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            
+            // 顯示被點擊的區塊，並將按鈕設為 active
+            document.getElementById(tabId).classList.add('active');
+            btnElement.classList.add('active');
+        }}
+    </script>
+
     <script type="module">
         import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({ startOnLoad: true, theme: 'base' });
+        mermaid.initialize({{ startOnLoad: true, theme: 'base' }});
     </script>
 </body>
 </html>
