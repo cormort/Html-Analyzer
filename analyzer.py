@@ -1,4 +1,3 @@
-# analyzer.py
 import os
 import re
 from dataclasses import dataclass, field
@@ -124,13 +123,29 @@ class HTMLJSAnalyzer:
 
 class Exporter:
     def __init__(self, report: ReportData, output_dir: str, base_name: str):
-        self.report = report
         self.output_dir = output_dir
         self.base_name = base_name
         self.icons = {
             "network": "🌐", "execution": "⚡", "dom": "💉",
             "storage": "🗄️", "sensitive": "📋", "dynamic": "🔗"
         }
+        
+        # --- 新增：雜訊過濾機制 ---
+        cleaned_functions = {}
+        for name, func in report.functions.items():
+            is_anonymous = name.startswith("<anonymous")
+            has_effects = len(func.side_effects) > 0
+            has_calls = len(func.calls) > 0
+            
+            # 條件：如果是匿名函式，且「沒有副作用」也「沒有呼叫其他函式」，就當作雜訊丟棄
+            if is_anonymous and not has_effects and not has_calls:
+                continue
+                
+            cleaned_functions[name] = func
+            
+        # 將過濾後的乾淨清單存回 report
+        report.functions = cleaned_functions
+        self.report = report
 
     def write_markdown(self):
         path = os.path.join(self.output_dir, f"{self.base_name}.report.md")
@@ -222,4 +237,4 @@ class Exporter:
         ])
         
         with open(path, 'w', encoding='utf-8') as f:
-            f.write("\n".join(lines))  
+            f.write("\n".join(lines))
