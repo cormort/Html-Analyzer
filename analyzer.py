@@ -22,6 +22,8 @@ class FunctionInfo:
     end_line: int
     calls: Set[str] = field(default_factory=set)
     side_effects: Set[str] = field(default_factory=set)
+    reads: Set[str] = field(default_factory=set)   # 新增：讀取的變數
+    writes: Set[str] = field(default_factory=set)  # 新增：寫入的變數
 
 @dataclass
 class ReportData:
@@ -120,6 +122,48 @@ class HTMLJSAnalyzer:
 
         for child in node.children:
             self._traverse_ast(child, offset_line, func_name)
+        # 🛑 新增：變數宣告 (例如 let x = y, lhs=x, rhs=y)
+            if node.type == 'variable_declarator':
+                lhs = node.child_by_field_name('name')
+                rhs = node.child_by_field_name('value')
+                if lhs and lhs.type == 'identifier':
+                    func_info.writes.add(lhs.text.decode('utf8'))
+                # 簡單遞迴找出 RHS 裡面的所有變數當作 reads
+                if rhs:
+                    self._extract_identifiers_as_reads(rhs, func_info)
+
+            # 🛑 新增：賦值操作 (例如 x.a = y, lhs=x.a, rhs=y)
+            elif node.type == 'assignment_expression':
+                lhs = node.child_by_field_name('left')
+                rhs = node.child_by_field_name('right')
+                if lhs:
+                    # 如果是簡單變數賦值 (x = 1)
+                    if lhs.type == 'identifier':
+                        func_info.writes.add(lhs.text.decode('utf8'))
+                    # 如果是物件屬性賦值 (x.y = 1)，我們把物件當作被寫入
+                    elif lhs.type == 'member_expression':
+                        obj = lhs.child_by_field_name('object')
+                        if obj and obj.type == 'identifier':
+                            func_info.writes.add(obj.text.decode('utf8'))
+                if rhs:
+                    self._extract_identifiers_as_reads(rhs, func_info)
+
+            # 🛑 新增：如果只是單純的變數使用 (當作 Read)
+            elif node.type == 'identifier' and node.parent.type not in ['function_declaration', 'variable_declarator', 'property_identifier']:
+                # 排除關鍵字和已知的全域變數 (避免雜訊)
+                var_name = node.text.decode('utf8')
+                ignore_list = {'console', 'window', 'document', 'Math', 'JSON'}
+                if var_name not in ignore_list:
+                    func_info.reads.add(var_name)
+
+    # 需要新增一個輔助函式來抓取 RHS 中的變數
+    def _extract_identifiers_as_reads(self, node, func_info):
+        if node.type == 'identifier':
+            var_name = node.text.decode('utf8')
+            if var_name not in {'console', 'window', 'document', 'Math', 'JSON'}:
+                func_info.reads.add(var_name)
+        for child in node.children:
+            self._extract_identifiers_as_reads(child, func_info)
 
 class Exporter:
     def __init__(self, report: ReportData, output_dir: str, base_name: str):
