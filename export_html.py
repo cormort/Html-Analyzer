@@ -10,50 +10,76 @@ def sanitize_id(name):
 def sanitize_label(name):
     return name.replace('<', '&lt;').replace('>', '&gt;')
 
+def _generate_func_cards_html(func_dict, icons):
+    html = '<div class="func-list">'
+    for func in func_dict.values():
+        is_risk = len(func.side_effects) > 0
+        card_class = "func-card has-risk" if is_risk else "func-card"
+        icon_str = "".join([icons.get(se, "") for se in func.side_effects])
+        
+        calls = ", ".join(func.calls) if func.calls else "無"
+        builtins = ", ".join(func.builtins) if func.builtins else "無"
+        caller_str = ", ".join([f.name for f in func_dict.values() if func.name in f.calls]) if [f.name for f in func_dict.values() if func.name in f.calls] else "無"
+        
+        html += f'''
+            <div class="{card_class}">
+                <div class="func-name">
+                    {icon_str} {func.name}()
+                    { '<span class="tag risk-tag">含風險</span>' if is_risk else ''}
+                </div>
+                <div class="func-meta">位置：第 {func.start_line} - {func.end_line} 行</div>
+                <div><strong>呼叫函式：</strong> {calls}</div>
+                <div><strong>內建方法：</strong> {builtins}</div>
+                <div><strong>被誰呼叫：</strong> {caller_str}</div>
+                <div style="margin-top: 8px;">
+                    <strong>副作用：</strong> 
+                    { "".join(f'<span class="tag risk-tag">{se}</span>' for se in func.side_effects) if func.side_effects else '<span class="tag">無</span>' }
+                </div>
+            </div>
+        '''
+    html += '</div>'
+    return html
+
 def generate_html_report(html_path, output_dir=None):
-    # 執行分析
     analyzer = HTMLJSAnalyzer(html_path)
     report = analyzer.analyze()
     
-    # --- 🔥 補上遺漏的：雜訊過濾機制 ---
-    cleaned_functions = {}
-    for name, func in report.functions.items():
-        is_anonymous = name.startswith("anonymous@")
-        has_effects = len(func.side_effects) > 0
-        has_calls = len(func.calls) > 0
-        
-        # 如果是匿名函式，且沒有副作用、也沒呼叫其他函式，就過濾掉
-        if is_anonymous and not has_effects and not has_calls:
-            continue
-            
-        cleaned_functions[name] = func
-    
-    # 將過濾後的乾淨清單存回 report
-    report.functions = cleaned_functions
-    # ------------------------------------
-    
-    # 決定輸出路徑
+    # 這裡的 report 已經是由 analyzer 分類過的 (report.functions 和 report.ui_functions)
     base_name = os.path.splitext(os.path.basename(html_path))[0]
     if not output_dir:
         output_dir = os.path.dirname(os.path.abspath(html_path))
     output_path = os.path.join(output_dir, f"{base_name}_report.html")
 
-    # 1. 產生 Mermaid 字串
     mermaid_lines = ["flowchart TD"]
     for func in report.functions.values():
         safe_id = sanitize_id(func.name)
         safe_label = sanitize_label(func.name)
         node_def = f'    {safe_id}["{safe_label}()"]'
-        
         if func.side_effects:
             primary_class = list(func.side_effects)[0]
             node_def += f":::{primary_class}"
         mermaid_lines.append(node_def)
-        
         for call in func.calls:
             if call in report.functions:
                 safe_call_id = sanitize_id(call)
                 mermaid_lines.append(f"    {safe_id} --> {safe_call_id}")
+
+    all_writes = set()
+    all_reads = set()
+    for f in report.functions.values():
+        all_writes.update(f.writes)
+        all_reads.update(f.reads)
+    shared_vars = all_writes.intersection(all_reads)
+    
+    for var_name in shared_vars:
+        writers = [f for f in report.functions.values() if var_name in f.writes]
+        readers = [f for f in report.functions.values() if var_name in f.reads]
+        for writer in writers:
+            for reader in readers:
+                if writer.name != reader.name: 
+                    w_id = sanitize_id(writer.name)
+                    r_id = sanitize_id(reader.name)
+                    mermaid_lines.append(f"    {w_id} -.->|變數: {var_name}| {r_id}")
 
     mermaid_lines.extend([
         "",
@@ -66,14 +92,8 @@ def generate_html_report(html_path, output_dir=None):
     ])
     mermaid_str = "\n".join(mermaid_lines)
 
-    # 2. 準備統計資料與圖示
-    side_effect_funcs = [f for f in report.functions.values() if f.side_effects]
-    icons = {
-        "network": "🌐", "execution": "⚡", "dom": "💉",
-        "storage": "🗄️", "sensitive": "📋", "dynamic": "🔗"
-    }
+    icons = { "network": "🌐", "execution": "⚡", "dom": "💉", "storage": "🗄️", "sensitive": "📋", "dynamic": "🔗" }
 
-    # 3. 組合 HTML 結構
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -82,227 +102,105 @@ def generate_html_report(html_path, output_dir=None):
     <title>分析報告: {report.html_file}</title>
     <style>
         :root {{
-            --bg-color: #f8f9fa;
-            --text-color: #333;
-            --card-bg: #fff;
-            --border-color: #dee2e6;
-            --danger-bg: #fff5f5;
-            --danger-border: #ffc9c9;
-            --danger-text: #e03131;
-            --primary-color: #f97316;
+            --bg-color: #f8f9fa; --text-color: #333; --card-bg: #fff;
+            --border-color: #dee2e6; --danger-bg: #fff5f5; --danger-border: #ffc9c9;
+            --danger-text: #e03131; --primary-color: #f97316;
         }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            line-height: 1.6;
-            padding: 20px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg-color); color: var(--text-color); line-height: 1.6; padding: 20px; max-width: 1200px; margin: 0 auto; }}
         h1, h2, h3 {{ color: #212529; }}
-        
-        .tab-nav {{
-            display: flex;
-            border-bottom: 2px solid var(--border-color);
-            margin-bottom: 20px;
-        }}
-        .tab-btn {{
-            background: none;
-            border: none;
-            padding: 12px 24px;
-            font-size: 16px;
-            cursor: pointer;
-            color: #6c757d;
-            border-bottom: 3px solid transparent;
-            margin-bottom: -2px;
-            transition: all 0.2s ease;
-        }}
+        .tab-nav {{ display: flex; border-bottom: 2px solid var(--border-color); margin-bottom: 20px; }}
+        .tab-btn {{ background: none; border: none; padding: 12px 24px; font-size: 16px; cursor: pointer; color: #6c757d; border-bottom: 3px solid transparent; margin-bottom: -2px; transition: all 0.2s ease; }}
         .tab-btn:hover {{ color: #495057; }}
-        .tab-btn.active {{
-            color: var(--primary-color);
-            border-bottom-color: var(--primary-color);
-            font-weight: bold;
-        }}
-        
-        /* 🔥 改回最單純的 display: none，交給 JS 處理渲染時機 */
+        .tab-btn.active {{ color: var(--primary-color); border-bottom-color: var(--primary-color); font-weight: bold; }}
+        .tab-container {{ position: relative; width: 100%; }}
         .tab-content {{ display: none; }}
         .tab-content.active {{ display: block; animation: fadeIn 0.3s; }}
+        #tab-flowchart.tab-content {{ display: block; position: absolute; left: -9999px; top: -9999px; visibility: hidden; width: 100%; }}
+        #tab-flowchart.tab-content.active {{ position: relative; left: 0; top: 0; visibility: visible; }}
         @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
-
-        .header-panel {{
-            background: var(--card-bg);
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            margin-bottom: 20px;
-        }}
-        .summary-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 15px;
-        }}
-        .stat-box {{
-            background: #e9ecef;
-            padding: 15px;
-            border-radius: 6px;
-            text-align: center;
-        }}
+        .header-panel {{ background: var(--card-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; }}
+        .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px; }}
+        .stat-box {{ background: #e9ecef; padding: 15px; border-radius: 6px; text-align: center; }}
         .stat-box .number {{ font-size: 24px; font-weight: bold; color: #495057; }}
         .stat-box.danger {{ background: var(--danger-bg); border: 1px solid var(--danger-border); }}
         .stat-box.danger .number {{ color: var(--danger-text); }}
-        
-        .mermaid-container {{
-            background: var(--card-bg);
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            overflow-x: auto;
-            text-align: center;
-        }}
-        
+        .mermaid-container {{ background: var(--card-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); overflow-x: auto; text-align: center; }}
         .func-list {{ display: grid; gap: 15px; }}
-        .func-card {{
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-left: 5px solid #ced4da;
-            padding: 15px;
-            border-radius: 6px;
-        }}
-        .func-card.has-risk {{
-            border-left-color: var(--danger-text);
-            background-color: var(--danger-bg);
-        }}
+        .func-card {{ background: var(--card-bg); border: 1px solid var(--border-color); border-left: 5px solid #ced4da; padding: 15px; border-radius: 6px; }}
+        .func-card.has-risk {{ border-left-color: var(--danger-text); background-color: var(--danger-bg); }}
         .func-name {{ font-size: 1.2em; font-weight: bold; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }}
         .func-meta {{ font-size: 0.9em; color: #6c757d; margin-bottom: 10px; }}
-        .tag {{
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 0.85em;
-            background: #e9ecef;
-            color: #495057;
-            margin-right: 5px;
-        }}
+        .tag {{ display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.85em; background: #e9ecef; color: #495057; margin-right: 5px; }}
         .tag.risk-tag {{ background: #ffe3e3; color: var(--danger-text); font-weight: bold; border: 1px solid var(--danger-border); }}
-        
         .warnings-list {{ color: var(--danger-text); font-weight: bold; }}
     </style>
 </head>
 <body>
-
     <h1>🔍 分析報告：{report.html_file}</h1>
 
     <div class="tab-nav">
-        <button class="tab-btn active" onclick="switchTab('tab-report', this)">文字報告</button>
+        <button class="tab-btn active" onclick="switchTab('tab-report', this)">主邏輯報告</button>
+        <button class="tab-btn" onclick="switchTab('tab-ui-scripts', this)">常規腳本 (UI/狀態)</button>
         <button class="tab-btn" onclick="switchTab('tab-flowchart', this)">流程圖 (Mermaid)</button>
     </div>
 
-    <div id="tab-report" class="tab-content active">
-        <div class="header-panel">
-            <div class="summary-grid">
-                <div class="stat-box">
-                    <div>函式總數</div>
-                    <div class="number">{len(report.functions)}</div>
-                </div>
-                <div class="stat-box {'danger' if side_effect_funcs else ''}">
-                    <div>含副作用函式</div>
-                    <div class="number">{len(side_effect_funcs)}</div>
-                </div>
-                <div class="stat-box {'danger' if report.warnings else ''}">
-                    <div>整檔警告</div>
-                    <div class="number">{len(report.warnings)}</div>
+    <div class="tab-container">
+        <div id="tab-report" class="tab-content active">
+            <div class="header-panel">
+                <div class="summary-grid">
+                    <div class="stat-box">
+                        <div>主函式總數</div>
+                        <div class="number">{len(report.functions)}</div>
+                    </div>
+                    <div class="stat-box {'danger' if any(f.side_effects for f in report.functions.values()) else ''}">
+                        <div>含副作用函式</div>
+                        <div class="number">{sum(1 for f in report.functions.values() if f.side_effects)}</div>
+                    </div>
+                    <div class="stat-box {'danger' if report.warnings else ''}">
+                        <div>整檔警告</div>
+                        <div class="number">{len(report.warnings)}</div>
+                    </div>
                 </div>
             </div>
-
-            {f'''
-            <div style="margin-top: 20px;">
-                <h3>⚠️ 整檔警告</h3>
-                <ul class="warnings-list">
-                    {"".join(f"<li>{w}</li>" for w in report.warnings)}
-                </ul>
-            </div>
-            ''' if report.warnings else ''}
+            <h2>主函式詳細清單</h2>
+            {_generate_func_cards_html(report.functions, icons)}
         </div>
 
-        <h2>函式詳細清單</h2>
-        <div class="func-list">
-"""
-    
-    for func in report.functions.values():
-        is_risk = len(func.side_effects) > 0
-        card_class = "func-card has-risk" if is_risk else "func-card"
-        icon_str = "".join([icons.get(se, "") for se in func.side_effects])
-        
-        calls = ", ".join(func.calls) if func.calls else "無"
-        callers = [f.name for f in report.functions.values() if func.name in f.calls]
-        caller_str = ", ".join(callers) if callers else "無"
-        
-        html_content += f'''
-            <div class="{card_class}">
-                <div class="func-name">
-                    {icon_str} {func.name}()
-                    { '<span class="tag risk-tag">含風險</span>' if is_risk else ''}
-                </div>
-                <div class="func-meta">位置：第 {func.start_line} - {func.end_line} 行</div>
-                <div><strong>呼叫其他函式：</strong> {calls}</div>
-                <div><strong>被誰呼叫：</strong> {caller_str}</div>
-                <div style="margin-top: 8px;">
-                    <strong>副作用：</strong> 
-                    { "".join(f'<span class="tag risk-tag">{se}</span>' for se in func.side_effects) if func.side_effects else '<span class="tag">無</span>' }
-                </div>
-            </div>
-        '''
+        <div id="tab-ui-scripts" class="tab-content">
+            <h2>常規腳本 (UI/狀態操作)</h2>
+            <p style="color: #6c757d;">此區塊列出僅包含內建方法 (如 <code>forEach</code>, <code>addEventListener</code>)，且無危險副作用的輔助函式。</p>
+            {_generate_func_cards_html(report.ui_functions, icons) if report.ui_functions else "<p><em>未偵測到純常規 UI 腳本。</em></p>"}
+        </div>
 
-    html_content += f"""
+        <div id="tab-flowchart" class="tab-content">
+            <div class="mermaid-container">
+                <pre id="mermaid-graph" style="display: none;">\n{mermaid_str}\n</pre>
+                <div id="mermaid-output"></div>
+            </div>
         </div>
     </div>
-
-    <div id="tab-flowchart" class="tab-content">
-        <div class="mermaid-container">
-            <pre id="mermaid-graph" style="display: none;">
-{mermaid_str}
-            </pre>
-            <div id="mermaid-output"></div>
-        </div>
-    </div>
-
-    <footer style="margin-top: 40px; text-align: center; color: #adb5bd; font-size: 0.9em;">
-        免責聲明：此工具僅為輔助審查用途，基於靜態分析，無法保證偵測所有動態行為或繞過手法。
-    </footer>
 
     <script>
         function switchTab(tabId, btnElement) {{
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-            
             document.getElementById(tabId).classList.add('active');
             btnElement.classList.add('active');
             
-            // 🔥 當切換到圖表頁籤時，呼叫 Mermaid 進行延遲渲染
             if (tabId === 'tab-flowchart' && window.renderMermaidGraph) {{
-                // 給一點點微小延遲，確保 DOM 的 display: block 已經生效
                 setTimeout(window.renderMermaidGraph, 50);
             }}
         }}
     </script>
-
     <script type="module">
         import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        
-        // 關閉自動渲染
         mermaid.initialize({{ startOnLoad: false, theme: 'base' }});
-        
-        // 建立一個全域函式供頁籤點擊時呼叫
         window.renderMermaidGraph = async function() {{
             const outputDiv = document.getElementById('mermaid-output');
-            
-            // 確保只渲染一次，不要重複浪費效能
             if (!outputDiv.hasAttribute('data-rendered')) {{
-                const graphDefinition = document.getElementById('mermaid-graph').textContent;
+                const graphDef = document.getElementById('mermaid-graph').textContent;
                 try {{
-                    const {{ svg }} = await mermaid.render('mermaid-svg', graphDefinition);
+                    const {{ svg }} = await mermaid.render('mermaid-svg', graphDef);
                     outputDiv.innerHTML = svg;
                     outputDiv.setAttribute('data-rendered', 'true');
                 }} catch (error) {{
@@ -314,27 +212,6 @@ def generate_html_report(html_path, output_dir=None):
 </body>
 </html>
 """
-
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
-    
     return output_path
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="產生 HTML 格式的靜態分析報告")
-    parser.add_argument("input", help="要分析的 HTML 檔案路徑")
-    parser.add_argument("--output-dir", help="輸出資料夾 (預設與輸入檔同目錄)")
-    
-    args = parser.parse_args()
-    
-    if not os.path.exists(args.input):
-        print(f"錯誤：找不到檔案 {args.input}", file=sys.stderr)
-        sys.exit(1)
-        
-    print(f"開始分析 {args.input} 並產生 HTML 報告...")
-    try:
-        out_file = generate_html_report(args.input, args.output_dir)
-        print(f"✅ 成功！報告已匯出至：{out_file}")
-    except Exception as e:
-        print(f"❌ 發生錯誤：{e}", file=sys.stderr)
-        sys.exit(1)
