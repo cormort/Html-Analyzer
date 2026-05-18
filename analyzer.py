@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from tree_sitter_languages import get_parser
 from tree_sitter import Node as TSNode
 from mermaid_gen import generate_mermaid_flowchart
-from sbom import analyze_dependencies, Dependency, SEVERITY_ICONS
+from sbom import analyze_dependencies, Dependency, SEVERITY_ICONS, get_db_metadata
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -257,14 +257,21 @@ class Exporter:
         return generate_mermaid_flowchart(self.main_funcs)
 
     def render_sbom_markdown(self) -> str:
+        meta = get_db_metadata()
+        src_line = f"> 漏洞資料來源：{meta['source']}"
+        if meta["updated_at"]:
+            src_line += f"｜更新時間：{meta['updated_at']}"
+
         deps = self.report.dependencies
         if not deps:
-            return "# 相依套件 SBOM\n\n*未偵測到外部相依套件（檔案僅含內嵌程式碼）。*"
+            return ("# 相依套件 SBOM\n\n" + src_line +
+                    "\n\n*未偵測到外部相依套件（檔案僅含內嵌程式碼）。*")
 
         vuln_count = sum(1 for d in deps if d.vulnerabilities)
         lines = [
             "# 相依套件 SBOM",
-            "\n> 漏洞資料為內建靜態清單，涵蓋常見前端函式庫的知名 CVE，非完整掃描。\n",
+            "\n" + src_line,
+            "> 涵蓋常見前端函式庫的已知 CVE，非完整掃描。\n",
             f"- 外部相依套件：{len(deps)}",
             f"- 含已知漏洞套件：**{vuln_count}**",
             "\n## 套件清單",

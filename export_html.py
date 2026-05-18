@@ -2,7 +2,7 @@ import os
 from html import escape as html_escape
 from analyzer import HTMLJSAnalyzer, classify_functions, SIDE_EFFECT_ICONS
 from mermaid_gen import generate_mermaid_flowchart
-from sbom import SEVERITY_ICONS
+from sbom import SEVERITY_ICONS, get_db_metadata
 
 
 def _build_caller_index(func_dict):
@@ -118,6 +118,11 @@ def generate_html_report(html_path, output_dir=None, report=None):
 
     sbom_html = _generate_sbom_html(report.dependencies)
     vuln_dep_count = sum(1 for d in report.dependencies if d.vulnerabilities)
+    sbom_meta = get_db_metadata()
+    sbom_meta_text = f"漏洞資料來源：{sbom_meta['source']}"
+    if sbom_meta["updated_at"]:
+        sbom_meta_text += f"｜更新時間：{sbom_meta['updated_at']}"
+    safe_sbom_meta = html_escape(sbom_meta_text)
 
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-TW">
@@ -200,7 +205,8 @@ def generate_html_report(html_path, output_dir=None, report=None):
 
         <div id="tab-sbom" class="tab-content">
             <h2>相依套件 SBOM</h2>
-            <p style="color: #6c757d;">外部相依套件清單與已知漏洞比對。漏洞資料為內建靜態清單，涵蓋常見前端函式庫的知名 CVE，非完整掃描。</p>
+            <p style="color: #6c757d;">外部相依套件清單與已知漏洞比對，涵蓋常見前端函式庫的 CVE，非完整掃描。</p>
+            <p style="color: #6c757d; font-size: 0.9em;">{safe_sbom_meta}</p>
             <div class="header-panel">
                 <div class="summary-grid">
                     <div class="stat-box">

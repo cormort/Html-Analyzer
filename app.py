@@ -4,10 +4,15 @@ import os
 import shutil
 import traceback
 import logging
+import sbom
 from analyzer import HTMLJSAnalyzer, Exporter
 from export_html import generate_html_report
 
 logging.basicConfig(level=logging.ERROR)
+
+# Refresh the vulnerability database from OSV.dev on every startup.
+_db_meta = sbom.refresh_vulnerability_db(timeout=10)
+logging.info("SBOM vulnerability DB: %s", _db_meta["source"])
 
 def analyze_uploaded_html(file_obj):
     if file_obj is None:
