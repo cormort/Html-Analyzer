@@ -22,8 +22,8 @@ class FunctionInfo:
     end_line: int
     calls: Set[str] = field(default_factory=set)
     side_effects: Set[str] = field(default_factory=set)
-    reads: Set[str] = field(default_factory=set)   # 新增：讀取的變數
-    writes: Set[str] = field(default_factory=set)  # 新增：寫入的變數
+    reads: Set[str] = field(default_factory=set)   # 讀取的變數
+    writes: Set[str] = field(default_factory=set)  # 寫入的變數
 
 @dataclass
 class ReportData:
@@ -94,7 +94,7 @@ class HTMLJSAnalyzer:
             elif node.parent and node.parent.type == 'variable_declarator':
                 name_node = node.parent.child_by_field_name('name')
             
-            # 若無名稱則標記為匿名
+            # 若無名稱則標記為匿名 (注意：移除了會破壞 Mermaid 的角括號 < >)
             name = name_node.text.decode('utf8') if name_node else f"anonymous@{offset_line + node.start_point[0]}:{node.start_point[1]}"
             
             func_name = name
@@ -105,42 +105,40 @@ class HTMLJSAnalyzer:
                     end_line=offset_line + node.end_point[0]
                 )
 
-        # 如果在函式內部，分析 CallExpression 和 副作用
+        # 如果在函式內部，分析 CallExpression、副作用與變數操作
         if current_func and current_func in self.report.functions:
+            func_info = self.report.functions[current_func]
+            
+            # 1. 紀錄函式呼叫
             if node.type == 'call_expression':
                 callee = node.child_by_field_name('function')
                 if callee:
                     callee_name = callee.text.decode('utf8').split('.')[-1]
-                    self.report.functions[current_func].calls.add(callee_name)
+                    func_info.calls.add(callee_name)
                     
-            # 檢查副作用 (識別字比對)
+            # 2. 檢查副作用 (識別字比對)
             if node.type in ['identifier', 'property_identifier']:
                 token = node.text.decode('utf8')
                 for category, identifiers in SIDE_EFFECTS_MAP.items():
                     if token in identifiers:
-                        self.report.functions[current_func].side_effects.add(category)
+                        func_info.side_effects.add(category)
 
-        for child in node.children:
-            self._traverse_ast(child, offset_line, func_name)
-        # 🛑 新增：變數宣告 (例如 let x = y, lhs=x, rhs=y)
+            # 3. 資料流：變數宣告 (let x = y)
             if node.type == 'variable_declarator':
                 lhs = node.child_by_field_name('name')
                 rhs = node.child_by_field_name('value')
                 if lhs and lhs.type == 'identifier':
                     func_info.writes.add(lhs.text.decode('utf8'))
-                # 簡單遞迴找出 RHS 裡面的所有變數當作 reads
                 if rhs:
                     self._extract_identifiers_as_reads(rhs, func_info)
 
-            # 🛑 新增：賦值操作 (例如 x.a = y, lhs=x.a, rhs=y)
+            # 4. 資料流：賦值操作 (x = y 或 obj.x = y)
             elif node.type == 'assignment_expression':
                 lhs = node.child_by_field_name('left')
                 rhs = node.child_by_field_name('right')
                 if lhs:
-                    # 如果是簡單變數賦值 (x = 1)
                     if lhs.type == 'identifier':
                         func_info.writes.add(lhs.text.decode('utf8'))
-                    # 如果是物件屬性賦值 (x.y = 1)，我們把物件當作被寫入
                     elif lhs.type == 'member_expression':
                         obj = lhs.child_by_field_name('object')
                         if obj and obj.type == 'identifier':
@@ -148,22 +146,27 @@ class HTMLJSAnalyzer:
                 if rhs:
                     self._extract_identifiers_as_reads(rhs, func_info)
 
-            # 🛑 新增：如果只是單純的變數使用 (當作 Read)
-            elif node.type == 'identifier' and node.parent.type not in ['function_declaration', 'variable_declarator', 'property_identifier']:
-                # 排除關鍵字和已知的全域變數 (避免雜訊)
+            # 5. 資料流：單純的變數使用 (當作讀取)
+            elif node.type == 'identifier' and node.parent and node.parent.type not in ['function_declaration', 'variable_declarator', 'property_identifier', 'member_expression']:
                 var_name = node.text.decode('utf8')
-                ignore_list = {'console', 'window', 'document', 'Math', 'JSON'}
+                # 排除常見的全域關鍵字與內建函式，減少雜訊
+                ignore_list = {'console', 'window', 'document', 'Math', 'JSON', 'undefined', 'null', 'true', 'false'}
                 if var_name not in ignore_list:
                     func_info.reads.add(var_name)
 
-    # 需要新增一個輔助函式來抓取 RHS 中的變數
+        for child in node.children:
+            self._traverse_ast(child, offset_line, func_name)
+
     def _extract_identifiers_as_reads(self, node, func_info):
+        """輔助函式：遞迴抓取 RHS 中的變數名稱當作 Read"""
         if node.type == 'identifier':
             var_name = node.text.decode('utf8')
-            if var_name not in {'console', 'window', 'document', 'Math', 'JSON'}:
+            ignore_list = {'console', 'window', 'document', 'Math', 'JSON', 'undefined', 'null'}
+            if var_name not in ignore_list:
                 func_info.reads.add(var_name)
         for child in node.children:
             self._extract_identifiers_as_reads(child, func_info)
+
 
 class Exporter:
     def __init__(self, report: ReportData, output_dir: str, base_name: str):
@@ -174,7 +177,7 @@ class Exporter:
             "storage": "🗄️", "sensitive": "📋", "dynamic": "🔗"
         }
         
-        # --- 新增：雜訊過濾機制 ---
+        # --- 雜訊過濾機制 ---
         cleaned_functions = {}
         for name, func in report.functions.items():
             is_anonymous = name.startswith("anonymous@")
@@ -212,7 +215,7 @@ class Exporter:
         for func in self.report.functions.values():
             icon_str = "".join([self.icons.get(se, "") for se in func.side_effects])
             
-            # --- 強化：針對有副作用的函式加上醒目標示 ---
+            # 針對有副作用的函式加上醒目標示
             if func.side_effects:
                 lines.append(f"\n### 🚨 <mark>{icon_str} {func.name} (含風險)</mark>")
             else:
@@ -223,7 +226,12 @@ class Exporter:
             calls = ", ".join(func.calls) if func.calls else "無"
             lines.append(f"- 呼叫：{calls}")
             
-            # --- 強化：凸顯副作用文字 ---
+            reads = ", ".join(func.reads) if func.reads else "無"
+            writes = ", ".join(func.writes) if func.writes else "無"
+            lines.append(f"- 讀取變數：{reads}")
+            lines.append(f"- 寫入變數：{writes}")
+            
+            # 凸顯副作用文字
             if func.side_effects:
                 effects = ", ".join(func.side_effects)
                 lines.append(f"- **副作用：{effects}** ⚠️")
@@ -243,7 +251,7 @@ class Exporter:
         path = os.path.join(self.output_dir, f"{self.base_name}.flow.mmd")
         lines = ["flowchart TD"]
         
-        # 輔助函式：確保 ID 不含 Mermaid 不允許的特殊符號 (<, >, @, :)
+        # 輔助函式：確保 ID 不含 Mermaid 不允許的特殊符號
         import re
         def sanitize_id(name):
             return re.sub(r'[^a-zA-Z0-9]', '_', name)
@@ -263,13 +271,33 @@ class Exporter:
                 node_def += f":::{primary_class}"
             lines.append(node_def)
             
-            # 建立連線時也必須使用清理過的 ID
+            # 1. 建立控制流連線 (實線：A 呼叫 B)
             for call in func.calls:
                 if call in self.report.functions:
                     safe_call_id = sanitize_id(call)
                     lines.append(f"    {safe_id} --> {safe_call_id}")
 
-        # --- 強化：增加框線厚度 (stroke-width:3px) 與字體顏色，讓圖表上的風險節點更顯眼 ---
+        # 2. 建立資料流連線 (虛線：A 寫入某變數，B 讀取該變數)
+        all_writes = set()
+        all_reads = set()
+        for f in self.report.functions.values():
+            all_writes.update(f.writes)
+            all_reads.update(f.reads)
+            
+        shared_vars = all_writes.intersection(all_reads)
+        
+        for var_name in shared_vars:
+            writers = [f for f in self.report.functions.values() if var_name in f.writes]
+            readers = [f for f in self.report.functions.values() if var_name in f.reads]
+            
+            for writer in writers:
+                for reader in readers:
+                    if writer.name != reader.name: # 避免自己連自己
+                        w_id = sanitize_id(writer.name)
+                        r_id = sanitize_id(reader.name)
+                        lines.append(f"    {w_id} -.->|變數: {var_name}| {r_id}")
+
+        # 增加框線厚度與樣式
         lines.extend([
             "",
             "    classDef network fill:#fee,stroke:#c00,stroke-width:3px,color:#000",
