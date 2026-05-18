@@ -2,6 +2,7 @@ import os
 from html import escape as html_escape
 from analyzer import HTMLJSAnalyzer, classify_functions, SIDE_EFFECT_ICONS
 from mermaid_gen import generate_mermaid_flowchart
+from sbom import SEVERITY_ICONS
 
 
 def _build_caller_index(func_dict):
@@ -47,6 +48,43 @@ def _generate_func_cards_html(func_dict, icons, caller_index):
     return html
 
 
+def _generate_sbom_html(dependencies):
+    if not dependencies:
+        return "<p><em>未偵測到外部相依套件（檔案僅含內嵌程式碼）。</em></p>"
+
+    html = '<div class="func-list">'
+    for dep in dependencies:
+        is_risk = len(dep.vulnerabilities) > 0
+        card_class = "func-card has-risk" if is_risk else "func-card"
+        name = html_escape(dep.name)
+        version = html_escape(dep.version) if dep.version else "未知"
+        source = html_escape(dep.source)
+        risk_badge = '<span class="tag risk-tag">含已知漏洞</span>' if is_risk else ''
+
+        if dep.vulnerabilities:
+            vuln_html = ""
+            for v in dep.vulnerabilities:
+                icon = SEVERITY_ICONS.get(v["severity"], "")
+                vuln_html += (
+                    f'<div class="warnings-list">{icon} {html_escape(v["id"])} '
+                    f'({html_escape(v["severity"])}) — {html_escape(v["desc"])}'
+                    f'，修復版本：{html_escape(v["fixed"])}</div>'
+                )
+        else:
+            vuln_html = '<span class="tag">無比對到</span>'
+
+        html += f'''
+            <div class="{card_class}">
+                <div class="func-name">{name} <code>{version}</code> {risk_badge}</div>
+                <div class="func-meta">類型：{html_escape(dep.kind)}</div>
+                <div style="word-break: break-all;"><strong>來源：</strong> {source}</div>
+                <div style="margin-top: 8px;"><strong>已知漏洞：</strong> {vuln_html}</div>
+            </div>
+        '''
+    html += '</div>'
+    return html
+
+
 def generate_html_report(html_path, output_dir=None, report=None):
     if report is None:
         analyzer = HTMLJSAnalyzer(html_path)
@@ -77,6 +115,9 @@ def generate_html_report(html_path, output_dir=None, report=None):
 
     has_side_effects = any(f.side_effects for f in main_funcs.values())
     side_effect_count = sum(1 for f in main_funcs.values() if f.side_effects)
+
+    sbom_html = _generate_sbom_html(report.dependencies)
+    vuln_dep_count = sum(1 for d in report.dependencies if d.vulnerabilities)
 
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-TW">
@@ -125,6 +166,7 @@ def generate_html_report(html_path, output_dir=None, report=None):
     <div class="tab-nav">
         <button class="tab-btn active" onclick="switchTab('tab-report', this)">主邏輯報告</button>
         <button class="tab-btn" onclick="switchTab('tab-ui-scripts', this)">常規腳本 (UI/狀態)</button>
+        <button class="tab-btn" onclick="switchTab('tab-sbom', this)">相依套件 (SBOM)</button>
         <button class="tab-btn" onclick="switchTab('tab-flowchart', this)">流程圖 (Mermaid)</button>
     </div>
 
@@ -154,6 +196,24 @@ def generate_html_report(html_path, output_dir=None, report=None):
             <h2>常規腳本 (UI/狀態操作)</h2>
             <p style="color: #6c757d;">此區塊列出僅包含內建方法 (如 <code>forEach</code>, <code>addEventListener</code>)，且無危險副作用的輔助函式。</p>
             {ui_cards_html}
+        </div>
+
+        <div id="tab-sbom" class="tab-content">
+            <h2>相依套件 SBOM</h2>
+            <p style="color: #6c757d;">外部相依套件清單與已知漏洞比對。漏洞資料為內建靜態清單，涵蓋常見前端函式庫的知名 CVE，非完整掃描。</p>
+            <div class="header-panel">
+                <div class="summary-grid">
+                    <div class="stat-box">
+                        <div>外部相依套件</div>
+                        <div class="number">{len(report.dependencies)}</div>
+                    </div>
+                    <div class="stat-box {'danger' if vuln_dep_count else ''}">
+                        <div>含已知漏洞套件</div>
+                        <div class="number">{vuln_dep_count}</div>
+                    </div>
+                </div>
+            </div>
+            {sbom_html}
         </div>
 
         <div id="tab-flowchart" class="tab-content">

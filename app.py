@@ -11,11 +11,11 @@ logging.basicConfig(level=logging.ERROR)
 
 def analyze_uploaded_html(file_obj):
     if file_obj is None:
-        return "⚠️ 請先上傳 HTML 檔案", "", "", gr.DownloadButton(visible=False)
+        return "⚠️ 請先上傳 HTML 檔案", "", "", "", gr.DownloadButton(visible=False)
 
     html_path = file_obj.name
     if not os.path.isfile(html_path):
-        return "❌ 檔案不存在或路徑無效", "", "", gr.DownloadButton(visible=False)
+        return "❌ 檔案不存在或路徑無效", "", "", "", gr.DownloadButton(visible=False)
 
     temp_dir = tempfile.mkdtemp()
     try:
@@ -25,6 +25,7 @@ def analyze_uploaded_html(file_obj):
         exporter = Exporter(report_data)
         md_content = exporter.render_markdown()
         ui_content = exporter.render_ui_markdown()
+        sbom_content = exporter.render_sbom_markdown()
         mmd_content, has_edges = exporter.render_mermaid()
         if not exporter.main_funcs:
             mermaid_markdown = "*無主函式呼叫關係可顯示。*"
@@ -38,11 +39,11 @@ def analyze_uploaded_html(file_obj):
         download_friendly_path = os.path.join(temp_dir, f"{original_basename}_分析報告.html")
         shutil.move(raw_html_report_path, download_friendly_path)
 
-        return md_content, ui_content, mermaid_markdown, gr.DownloadButton(value=download_friendly_path, visible=True)
+        return md_content, ui_content, sbom_content, mermaid_markdown, gr.DownloadButton(value=download_friendly_path, visible=True)
 
     except Exception as e:
         logging.error("Analysis failed: %s", traceback.format_exc())
-        return f"❌ 分析失敗：{str(e)}", "", "", gr.DownloadButton(visible=False)
+        return f"❌ 分析失敗：{str(e)}", "", "", "", gr.DownloadButton(visible=False)
 
 with gr.Blocks(title="HTML/JS 安全與結構分析工具") as demo:
     gr.Markdown("# 🔍 HTML/JS 程式碼分析工具")
@@ -60,13 +61,15 @@ with gr.Blocks(title="HTML/JS 安全與結構分析工具") as demo:
                     md_output = gr.Markdown(label="主邏輯報告")
                 with gr.Tab("常規腳本 (UI/狀態)"):
                     ui_output = gr.Markdown(label="常規腳本")
+                with gr.Tab("相依套件 (SBOM)"):
+                    sbom_output = gr.Markdown(label="相依套件 SBOM")
                 with gr.Tab("流程圖 (Mermaid)"):
                     mmd_output = gr.Markdown(label="呼叫關係圖")
 
     analyze_btn.click(
         fn=analyze_uploaded_html,
         inputs=file_input,
-        outputs=[md_output, ui_output, mmd_output, download_btn]
+        outputs=[md_output, ui_output, sbom_output, mmd_output, download_btn]
     )
 
 if __name__ == "__main__":

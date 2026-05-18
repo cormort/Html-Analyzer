@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from tree_sitter_languages import get_parser
 from tree_sitter import Node as TSNode
 from mermaid_gen import generate_mermaid_flowchart
+from sbom import analyze_dependencies, Dependency, SEVERITY_ICONS
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -80,6 +81,7 @@ class ReportData:
     warnings: List[str] = field(default_factory=list)
     functions: Dict[str, FunctionInfo] = field(default_factory=dict)
     ui_functions: Dict[str, FunctionInfo] = field(default_factory=dict)
+    dependencies: List[Dependency] = field(default_factory=list)
 
 
 class HTMLJSAnalyzer:
@@ -100,14 +102,24 @@ class HTMLJSAnalyzer:
 
         soup = BeautifulSoup(html_content, 'html.parser')
 
+        resources = []
         for script in soup.find_all('script'):
             src = script.get('src')
             if src:
+                resources.append((src, 'script'))
                 src_display = src if src.startswith(('http://', 'https://', '//')) else f"(relative) {src}"
                 self.report.warnings.append(f"外部 script 引用：{src_display}")
             elif script.string:
                 start_line = getattr(script, 'sourceline', 1)
                 self.script_blocks.append((start_line, script.string))
+
+        for link in soup.find_all('link'):
+            rel = link.get('rel') or []
+            href = link.get('href')
+            if href and any('stylesheet' in r.lower() for r in rel):
+                resources.append((href, 'stylesheet'))
+
+        self.report.dependencies = analyze_dependencies(resources)
 
         for iframe in soup.find_all('iframe'):
             self.report.warnings.append(f"發現 iframe 標籤 (src: {iframe.get('src')})")
@@ -243,6 +255,39 @@ class Exporter:
 
     def render_mermaid(self) -> tuple[str, bool]:
         return generate_mermaid_flowchart(self.main_funcs)
+
+    def render_sbom_markdown(self) -> str:
+        deps = self.report.dependencies
+        if not deps:
+            return "# 相依套件 SBOM\n\n*未偵測到外部相依套件（檔案僅含內嵌程式碼）。*"
+
+        vuln_count = sum(1 for d in deps if d.vulnerabilities)
+        lines = [
+            "# 相依套件 SBOM",
+            "\n> 漏洞資料為內建靜態清單，涵蓋常見前端函式庫的知名 CVE，非完整掃描。\n",
+            f"- 外部相依套件：{len(deps)}",
+            f"- 含已知漏洞套件：**{vuln_count}**",
+            "\n## 套件清單",
+        ]
+        for dep in deps:
+            version = dep.version if dep.version else "未知"
+            if dep.vulnerabilities:
+                lines.append(f"\n### 🚨 <mark>{dep.name} `{version}` (含已知漏洞)</mark>")
+            else:
+                lines.append(f"\n### {dep.name} `{version}`")
+            lines.append(f"- 來源：{dep.source}")
+            lines.append(f"- 類型：{dep.kind}")
+            if dep.vulnerabilities:
+                lines.append("- 已知漏洞：")
+                for v in dep.vulnerabilities:
+                    icon = SEVERITY_ICONS.get(v["severity"], "")
+                    lines.append(
+                        f"  - {icon} **{v['id']}** ({v['severity']}) — "
+                        f"{v['desc']}，修復版本：{v['fixed']}"
+                    )
+            else:
+                lines.append("- 已知漏洞：無比對到")
+        return "\n".join(lines)
 
     def _append_function_details(self, lines: List[str], func_dict: Dict[str, FunctionInfo]):
         for func in func_dict.values():
