@@ -35,8 +35,7 @@ def analyze_uploaded_html(file_obj):
                 mmd_content = f.read()
                 
             # Gradio 的 Markdown 支援 Mermaid 渲染，我們將其包裝起來
-            mermaid_markdown = f"```mermaid\n{mmd_content}\n
-```"
+            mermaid_markdown = f"```mermaid\n{mmd_content}\n```"
             
             return md_content, mermaid_markdown
             
