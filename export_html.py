@@ -56,7 +56,7 @@ def generate_html_report(html_path, output_dir=None):
         "storage": "🗄️", "sensitive": "📋", "dynamic": "🔗"
     }
 
-    # 3. 組合 HTML 結構 (加入 Tab 樣式與邏輯)
+    # 3. 組合 HTML 結構 (更新 Tab CSS 隱藏方式)
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -72,7 +72,7 @@ def generate_html_report(html_path, output_dir=None):
             --danger-bg: #fff5f5;
             --danger-border: #ffc9c9;
             --danger-text: #e03131;
-            --primary-color: #f97316; /* 呼應 Gradio 的橘色系 */
+            --primary-color: #f97316;
         }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -85,7 +85,6 @@ def generate_html_report(html_path, output_dir=None):
         }}
         h1, h2, h3 {{ color: #212529; }}
         
-        /* 頁籤導覽列樣式 */
         .tab-nav {{
             display: flex;
             border-bottom: 2px solid var(--border-color);
@@ -109,12 +108,27 @@ def generate_html_report(html_path, output_dir=None):
             font-weight: bold;
         }}
         
-        /* 頁籤內容區塊 */
-        .tab-content {{ display: none; animation: fadeIn 0.3s; }}
-        .tab-content.active {{ display: block; }}
+        /* 🔥 修復 Mermaid 繪製問題：使用離屏渲染取代 display: none */
+        .tab-container {{
+            position: relative;
+            width: 100%;
+        }}
+        .tab-content {{ 
+            position: absolute; 
+            left: -9999px; 
+            top: -9999px; 
+            visibility: hidden; 
+            width: 100%;
+        }}
+        .tab-content.active {{ 
+            position: relative; 
+            left: 0; 
+            top: 0; 
+            visibility: visible; 
+            animation: fadeIn 0.3s; 
+        }}
         @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
 
-        /* 統計與卡片樣式 */
         .header-panel {{
             background: var(--card-bg);
             padding: 20px;
@@ -184,38 +198,38 @@ def generate_html_report(html_path, output_dir=None):
         <button class="tab-btn" onclick="switchTab('tab-flowchart', this)">流程圖 (Mermaid)</button>
     </div>
 
-    <div id="tab-report" class="tab-content active">
-        <div class="header-panel">
-            <div class="summary-grid">
-                <div class="stat-box">
-                    <div>函式總數</div>
-                    <div class="number">{len(report.functions)}</div>
+    <div class="tab-container">
+        <div id="tab-report" class="tab-content active">
+            <div class="header-panel">
+                <div class="summary-grid">
+                    <div class="stat-box">
+                        <div>函式總數</div>
+                        <div class="number">{len(report.functions)}</div>
+                    </div>
+                    <div class="stat-box {'danger' if side_effect_funcs else ''}">
+                        <div>含副作用函式</div>
+                        <div class="number">{len(side_effect_funcs)}</div>
+                    </div>
+                    <div class="stat-box {'danger' if report.warnings else ''}">
+                        <div>整檔警告</div>
+                        <div class="number">{len(report.warnings)}</div>
+                    </div>
                 </div>
-                <div class="stat-box {'danger' if side_effect_funcs else ''}">
-                    <div>含副作用函式</div>
-                    <div class="number">{len(side_effect_funcs)}</div>
+
+                {f'''
+                <div style="margin-top: 20px;">
+                    <h3>⚠️ 整檔警告</h3>
+                    <ul class="warnings-list">
+                        {"".join(f"<li>{w}</li>" for w in report.warnings)}
+                    </ul>
                 </div>
-                <div class="stat-box {'danger' if report.warnings else ''}">
-                    <div>整檔警告</div>
-                    <div class="number">{len(report.warnings)}</div>
-                </div>
+                ''' if report.warnings else ''}
             </div>
 
-            {f'''
-            <div style="margin-top: 20px;">
-                <h3>⚠️ 整檔警告</h3>
-                <ul class="warnings-list">
-                    {"".join(f"<li>{w}</li>" for w in report.warnings)}
-                </ul>
-            </div>
-            ''' if report.warnings else ''}
-        </div>
-
-        <h2>函式詳細清單</h2>
-        <div class="func-list">
+            <h2>函式詳細清單</h2>
+            <div class="func-list">
 """
     
-    # 組合函式清單 HTML
     for func in report.functions.values():
         is_risk = len(func.side_effects) > 0
         card_class = "func-card has-risk" if is_risk else "func-card"
@@ -226,45 +240,40 @@ def generate_html_report(html_path, output_dir=None):
         caller_str = ", ".join(callers) if callers else "無"
         
         html_content += f'''
-            <div class="{card_class}">
-                <div class="func-name">
-                    {icon_str} {func.name}()
-                    { '<span class="tag risk-tag">含風險</span>' if is_risk else ''}
+                <div class="{card_class}">
+                    <div class="func-name">
+                        {icon_str} {func.name}()
+                        { '<span class="tag risk-tag">含風險</span>' if is_risk else ''}
+                    </div>
+                    <div class="func-meta">位置：第 {func.start_line} - {func.end_line} 行</div>
+                    <div><strong>呼叫其他函式：</strong> {calls}</div>
+                    <div><strong>被誰呼叫：</strong> {caller_str}</div>
+                    <div style="margin-top: 8px;">
+                        <strong>副作用：</strong> 
+                        { "".join(f'<span class="tag risk-tag">{se}</span>' for se in func.side_effects) if func.side_effects else '<span class="tag">無</span>' }
+                    </div>
                 </div>
-                <div class="func-meta">位置：第 {func.start_line} - {func.end_line} 行</div>
-                <div><strong>呼叫其他函式：</strong> {calls}</div>
-                <div><strong>被誰呼叫：</strong> {caller_str}</div>
-                <div style="margin-top: 8px;">
-                    <strong>副作用：</strong> 
-                    { "".join(f'<span class="tag risk-tag">{se}</span>' for se in func.side_effects) if func.side_effects else '<span class="tag">無</span>' }
-                </div>
-            </div>
         '''
 
     html_content += f"""
+            </div>
         </div>
-    </div>
 
-    <div id="tab-flowchart" class="tab-content">
-        <div class="mermaid-container">
-            <pre class="mermaid">
+        <div id="tab-flowchart" class="tab-content">
+            <div class="mermaid-container">
+                <pre class="mermaid">
 {mermaid_str}
-            </pre>
+                </pre>
+            </div>
         </div>
-    </div>
-
-    <footer style="margin-top: 40px; text-align: center; color: #adb5bd; font-size: 0.9em;">
+    </div> <footer style="margin-top: 40px; text-align: center; color: #adb5bd; font-size: 0.9em;">
         免責聲明：此工具僅為輔助審查用途，基於靜態分析，無法保證偵測所有動態行為或繞過手法。
     </footer>
 
     <script>
         function switchTab(tabId, btnElement) {{
-            // 隱藏所有內容區塊
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            // 移除所有按鈕的 active 狀態
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-            
-            // 顯示被點擊的區塊，並將按鈕設為 active
             document.getElementById(tabId).classList.add('active');
             btnElement.classList.add('active');
         }}
