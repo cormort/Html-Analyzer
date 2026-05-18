@@ -2,7 +2,6 @@ import re
 
 
 MERMAID_CLASSDEFS = [
-    "",
     "    classDef network fill:#fee,stroke:#c00,stroke-width:3px,color:#000",
     "    classDef execution fill:#fee,stroke:#c00,stroke-width:3px,color:#000",
     "    classDef dom fill:#fef,stroke:#90c,stroke-width:3px,color:#000",
@@ -58,7 +57,7 @@ def generate_mermaid_flowchart(functions: dict) -> tuple[str, bool]:
 
     for (w_id, r_id), vars in shared_var_edges.items():
         var_label = ", ".join(sorted(set(vars)))
-        lines.append(f'    {w_id} -.->|變數: {var_label}| {r_id}')
+        lines.append(f'    {w_id} -.->|"變數: {var_label}"| {r_id}')
         has_edges = True
 
     lines.extend(MERMAID_CLASSDEFS)
