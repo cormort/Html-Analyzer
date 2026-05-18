@@ -1,30 +1,36 @@
 import os
-import sys
-import argparse
-import re
-from analyzer import HTMLJSAnalyzer
+from html import escape as html_escape
+from analyzer import HTMLJSAnalyzer, classify_functions, SIDE_EFFECT_ICONS
+from mermaid_gen import generate_mermaid_flowchart
 
-def sanitize_id(name):
-    return re.sub(r'[^a-zA-Z0-9]', '_', name)
 
-def sanitize_label(name):
-    return name.replace('<', '&lt;').replace('>', '&gt;')
+def _build_caller_index(func_dict):
+    index = {}
+    for f in func_dict.values():
+        for call in f.calls:
+            if call not in index:
+                index[call] = []
+            index[call].append(f.name)
+    return index
 
-def _generate_func_cards_html(func_dict, icons):
+
+def _generate_func_cards_html(func_dict, icons, caller_index):
     html = '<div class="func-list">'
     for func in func_dict.values():
         is_risk = len(func.side_effects) > 0
         card_class = "func-card has-risk" if is_risk else "func-card"
-        icon_str = "".join([icons.get(se, "") for se in func.side_effects])
-        
-        calls = ", ".join(func.calls) if func.calls else "無"
-        builtins = ", ".join(func.builtins) if func.builtins else "無"
-        caller_str = ", ".join([f.name for f in func_dict.values() if func.name in f.calls]) if [f.name for f in func_dict.values() if func.name in f.calls] else "無"
-        
+        icon_str = "".join([icons.get(se, "") for se in sorted(func.side_effects)])
+
+        safe_name = html_escape(func.name)
+        calls = ", ".join(html_escape(c) for c in sorted(func.calls)) if func.calls else "無"
+        builtins = ", ".join(html_escape(b) for b in sorted(func.builtins)) if func.builtins else "無"
+        callers = caller_index.get(func.name, [])
+        caller_str = ", ".join(html_escape(c) for c in callers) if callers else "無"
+
         html += f'''
             <div class="{card_class}">
                 <div class="func-name">
-                    {icon_str} {func.name}()
+                    {icon_str} {safe_name}()
                     { '<span class="tag risk-tag">含風險</span>' if is_risk else ''}
                 </div>
                 <div class="func-meta">位置：第 {func.start_line} - {func.end_line} 行</div>
@@ -32,74 +38,44 @@ def _generate_func_cards_html(func_dict, icons):
                 <div><strong>內建方法：</strong> {builtins}</div>
                 <div><strong>被誰呼叫：</strong> {caller_str}</div>
                 <div style="margin-top: 8px;">
-                    <strong>副作用：</strong> 
-                    { "".join(f'<span class="tag risk-tag">{se}</span>' for se in func.side_effects) if func.side_effects else '<span class="tag">無</span>' }
+                    <strong>副作用：</strong>
+                    { "".join(f'<span class="tag risk-tag">{html_escape(se)}</span>' for se in sorted(func.side_effects)) if func.side_effects else '<span class="tag">無</span>' }
                 </div>
             </div>
         '''
     html += '</div>'
     return html
 
-def generate_html_report(html_path, output_dir=None):
-    analyzer = HTMLJSAnalyzer(html_path)
-    report = analyzer.analyze()
-    
-    # 這裡的 report 已經是由 analyzer 分類過的 (report.functions 和 report.ui_functions)
+
+def generate_html_report(html_path, output_dir=None, report=None):
+    if report is None:
+        analyzer = HTMLJSAnalyzer(html_path)
+        report = analyzer.analyze()
+
+    main_funcs, ui_funcs = classify_functions(report.functions)
+
     base_name = os.path.splitext(os.path.basename(html_path))[0]
     if not output_dir:
         output_dir = os.path.dirname(os.path.abspath(html_path))
     output_path = os.path.join(output_dir, f"{base_name}_report.html")
 
-    mermaid_lines = ["flowchart TD"]
-    for func in report.functions.values():
-        safe_id = sanitize_id(func.name)
-        safe_label = sanitize_label(func.name)
-        node_def = f'    {safe_id}["{safe_label}()"]'
-        if func.side_effects:
-            primary_class = list(func.side_effects)[0]
-            node_def += f":::{primary_class}"
-        mermaid_lines.append(node_def)
-        for call in func.calls:
-            if call in report.functions:
-                safe_call_id = sanitize_id(call)
-                mermaid_lines.append(f"    {safe_id} --> {safe_call_id}")
+    mermaid_str = generate_mermaid_flowchart(main_funcs)
 
-    all_writes = set()
-    all_reads = set()
-    for f in report.functions.values():
-        all_writes.update(f.writes)
-        all_reads.update(f.reads)
-    shared_vars = all_writes.intersection(all_reads)
-    
-    for var_name in shared_vars:
-        writers = [f for f in report.functions.values() if var_name in f.writes]
-        readers = [f for f in report.functions.values() if var_name in f.reads]
-        for writer in writers:
-            for reader in readers:
-                if writer.name != reader.name: 
-                    w_id = sanitize_id(writer.name)
-                    r_id = sanitize_id(reader.name)
-                    mermaid_lines.append(f"    {w_id} -.->|變數: {var_name}| {r_id}")
+    icons = SIDE_EFFECT_ICONS
+    main_caller_index = _build_caller_index(main_funcs)
+    ui_caller_index = _build_caller_index(ui_funcs)
 
-    mermaid_lines.extend([
-        "",
-        "    classDef network fill:#fee,stroke:#c00,stroke-width:3px,color:#000",
-        "    classDef execution fill:#fee,stroke:#c00,stroke-width:3px,color:#000",
-        "    classDef dom fill:#fef,stroke:#90c,stroke-width:3px,color:#000",
-        "    classDef storage fill:#eef,stroke:#36c,stroke-width:3px,color:#000",
-        "    classDef sensitive fill:#ffe,stroke:#c90,stroke-width:3px,color:#000",
-        "    classDef dynamic fill:#efe,stroke:#090,stroke-width:3px,color:#000"
-    ])
-    mermaid_str = "\n".join(mermaid_lines)
+    safe_html_file = html_escape(report.html_file)
 
-    icons = { "network": "🌐", "execution": "⚡", "dom": "💉", "storage": "🗄️", "sensitive": "📋", "dynamic": "🔗" }
+    has_side_effects = any(f.side_effects for f in main_funcs.values())
+    side_effect_count = sum(1 for f in main_funcs.values() if f.side_effects)
 
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>分析報告: {report.html_file}</title>
+    <title>分析報告: {safe_html_file}</title>
     <style>
         :root {{
             --bg-color: #f8f9fa; --text-color: #333; --card-bg: #fff;
@@ -136,7 +112,7 @@ def generate_html_report(html_path, output_dir=None):
     </style>
 </head>
 <body>
-    <h1>🔍 分析報告：{report.html_file}</h1>
+    <h1>🔍 分析報告：{safe_html_file}</h1>
 
     <div class="tab-nav">
         <button class="tab-btn active" onclick="switchTab('tab-report', this)">主邏輯報告</button>
@@ -150,11 +126,11 @@ def generate_html_report(html_path, output_dir=None):
                 <div class="summary-grid">
                     <div class="stat-box">
                         <div>主函式總數</div>
-                        <div class="number">{len(report.functions)}</div>
+                        <div class="number">{len(main_funcs)}</div>
                     </div>
-                    <div class="stat-box {'danger' if any(f.side_effects for f in report.functions.values()) else ''}">
+                    <div class="stat-box {'danger' if has_side_effects else ''}">
                         <div>含副作用函式</div>
-                        <div class="number">{sum(1 for f in report.functions.values() if f.side_effects)}</div>
+                        <div class="number">{side_effect_count}</div>
                     </div>
                     <div class="stat-box {'danger' if report.warnings else ''}">
                         <div>整檔警告</div>
@@ -163,13 +139,13 @@ def generate_html_report(html_path, output_dir=None):
                 </div>
             </div>
             <h2>主函式詳細清單</h2>
-            {_generate_func_cards_html(report.functions, icons)}
+            {_generate_func_cards_html(main_funcs, icons, main_caller_index)}
         </div>
 
         <div id="tab-ui-scripts" class="tab-content">
             <h2>常規腳本 (UI/狀態操作)</h2>
             <p style="color: #6c757d;">此區塊列出僅包含內建方法 (如 <code>forEach</code>, <code>addEventListener</code>)，且無危險副作用的輔助函式。</p>
-            {_generate_func_cards_html(report.ui_functions, icons) if report.ui_functions else "<p><em>未偵測到純常規 UI 腳本。</em></p>"}
+            {_generate_func_cards_html(ui_funcs, icons, ui_caller_index) if ui_funcs else "<p><em>未偵測到純常規 UI 腳本。</em></p>"}
         </div>
 
         <div id="tab-flowchart" class="tab-content">
@@ -186,7 +162,7 @@ def generate_html_report(html_path, output_dir=None):
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
             document.getElementById(tabId).classList.add('active');
             btnElement.classList.add('active');
-            
+
             if (tabId === 'tab-flowchart' && window.renderMermaidGraph) {{
                 setTimeout(window.renderMermaidGraph, 50);
             }}
