@@ -139,7 +139,7 @@ def generate_html_report(html_path, output_dir=None, report=None):
                 </div>
             </div>
             <h2>主函式詳細清單</h2>
-            {_generate_func_cards_html(main_funcs, icons, main_caller_index)}
+            {_generate_func_cards_html(main_funcs, icons, main_caller_index) if main_funcs else "<p><em>未偵測到主函式。所有函式皆歸類為常規腳本 (見「常規腳本」頁籤)。</em></p>"}
         </div>
 
         <div id="tab-ui-scripts" class="tab-content">
@@ -150,8 +150,7 @@ def generate_html_report(html_path, output_dir=None, report=None):
 
         <div id="tab-flowchart" class="tab-content">
             <div class="mermaid-container">
-                <pre id="mermaid-graph" style="display: none;">\n{mermaid_str}\n</pre>
-                <div id="mermaid-output"></div>
+                {'<p><em>無主函式呼叫關係可顯示。</em></p>' if not main_funcs else f'<pre id="mermaid-graph" style="display: none;">\\n{mermaid_str}\\n</pre><div id="mermaid-output"></div>'}
             </div>
         </div>
     </div>

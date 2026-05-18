@@ -26,7 +26,10 @@ def analyze_uploaded_html(file_obj):
         md_content = exporter.render_markdown()
         ui_content = exporter.render_ui_markdown()
         mmd_content = exporter.render_mermaid()
-        mermaid_markdown = f"```mermaid\n{mmd_content}\n```"
+        if exporter.main_funcs:
+            mermaid_markdown = f"```mermaid\n{mmd_content}\n```"
+        else:
+            mermaid_markdown = "*無主函式呼叫關係可顯示。*"
 
         raw_html_report_path = generate_html_report(html_path, temp_dir, report=report_data)
         original_basename = os.path.splitext(os.path.basename(html_path))[0]
