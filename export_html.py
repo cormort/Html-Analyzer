@@ -59,7 +59,7 @@ def generate_html_report(html_path, output_dir=None, report=None):
         output_dir = os.path.dirname(os.path.abspath(html_path))
     output_path = os.path.join(output_dir, f"{base_name}_report.html")
 
-    mermaid_str = generate_mermaid_flowchart(main_funcs)
+    mermaid_str, has_edges = generate_mermaid_flowchart(main_funcs)
 
     icons = SIDE_EFFECT_ICONS
     main_caller_index = _build_caller_index(main_funcs)
@@ -69,8 +69,9 @@ def generate_html_report(html_path, output_dir=None, report=None):
 
     main_cards_html = _generate_func_cards_html(main_funcs, icons, main_caller_index) if main_funcs else "<p><em>未偵測到主函式。所有函式皆歸類為常規腳本 (見「常規腳本」頁籤)。</em></p>"
     ui_cards_html = _generate_func_cards_html(ui_funcs, icons, ui_caller_index) if ui_funcs else "<p><em>未偵測到純常規 UI 腳本。</em></p>"
+    no_edges_hint = '<p style="color: #6c757d; margin-top: 12px;"><em>所有函式皆獨立運作，無互相呼叫或共享變數關係。</em></p>' if main_funcs and not has_edges else ''
     if main_funcs:
-        flowchart_html = f'<pre id="mermaid-graph" style="display: none;">\n{mermaid_str}\n</pre><div id="mermaid-output"></div>'
+        flowchart_html = f'<pre id="mermaid-graph" style="display: none;">\n{mermaid_str}\n</pre><div id="mermaid-output"></div>{no_edges_hint}'
     else:
         flowchart_html = '<p><em>無主函式呼叫關係可顯示。</em></p>'
 

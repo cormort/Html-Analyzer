@@ -241,7 +241,7 @@ class Exporter:
             self._append_function_details(lines_ui, self.ui_funcs)
         return "\n".join(lines_ui)
 
-    def render_mermaid(self) -> str:
+    def render_mermaid(self) -> tuple[str, bool]:
         return generate_mermaid_flowchart(self.main_funcs)
 
     def _append_function_details(self, lines: List[str], func_dict: Dict[str, FunctionInfo]):

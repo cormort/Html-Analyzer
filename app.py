@@ -25,11 +25,13 @@ def analyze_uploaded_html(file_obj):
         exporter = Exporter(report_data)
         md_content = exporter.render_markdown()
         ui_content = exporter.render_ui_markdown()
-        mmd_content = exporter.render_mermaid()
-        if exporter.main_funcs:
-            mermaid_markdown = f"```mermaid\n{mmd_content}\n```"
-        else:
+        mmd_content, has_edges = exporter.render_mermaid()
+        if not exporter.main_funcs:
             mermaid_markdown = "*無主函式呼叫關係可顯示。*"
+        elif not has_edges:
+            mermaid_markdown = f"```mermaid\n{mmd_content}\n```\n\n> 所有函式皆獨立運作，無互相呼叫或共享變數關係。"
+        else:
+            mermaid_markdown = f"```mermaid\n{mmd_content}\n```"
 
         raw_html_report_path = generate_html_report(html_path, temp_dir, report=report_data)
         original_basename = os.path.splitext(os.path.basename(html_path))[0]

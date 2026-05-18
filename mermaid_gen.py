@@ -20,8 +20,9 @@ def sanitize_label(name: str) -> str:
     return name.replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
 
 
-def generate_mermaid_flowchart(functions: dict) -> str:
+def generate_mermaid_flowchart(functions: dict) -> tuple[str, bool]:
     lines = ["flowchart TD"]
+    has_edges = False
 
     for func in functions.values():
         safe_id = sanitize_id(func.name)
@@ -36,6 +37,7 @@ def generate_mermaid_flowchart(functions: dict) -> str:
             if call in functions:
                 safe_call_id = sanitize_id(call)
                 lines.append(f"    {safe_id} --> {safe_call_id}")
+                has_edges = True
 
     all_writes = set()
     all_reads = set()
@@ -57,6 +59,7 @@ def generate_mermaid_flowchart(functions: dict) -> str:
     for (w_id, r_id), vars in shared_var_edges.items():
         var_label = ", ".join(sorted(set(vars)))
         lines.append(f'    {w_id} -.->|變數: {var_label}| {r_id}')
+        has_edges = True
 
     lines.extend(MERMAID_CLASSDEFS)
-    return "\n".join(lines)
+    return "\n".join(lines), has_edges
