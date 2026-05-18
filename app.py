@@ -84,4 +84,5 @@ with gr.Blocks(title="HTML/JS 安全與結構分析工具") as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch()
+    # 關閉實驗性的 ssr_mode，把渲染權交回給瀏覽器，Mermaid 就能正常工作了！
+    demo.launch(ssr_mode=False)
