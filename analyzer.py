@@ -93,7 +93,7 @@ class HTMLJSAnalyzer:
                 name_node = node.parent.child_by_field_name('name')
             
             # 若無名稱則標記為匿名
-            name = name_node.text.decode('utf8') if name_node else f"<anonymous@{offset_line + node.start_point[0]}:{node.start_point[1]}>"
+            name = name_node.text.decode('utf8') if name_node else f"anonymous@{offset_line + node.start_point[0]}:{node.start_point[1]}"
             
             func_name = name
             if func_name not in self.report.functions:
@@ -133,7 +133,7 @@ class Exporter:
         # --- 新增：雜訊過濾機制 ---
         cleaned_functions = {}
         for name, func in report.functions.items():
-            is_anonymous = name.startswith("<anonymous")
+            is_anonymous = name.startswith("anonymous@")
             has_effects = len(func.side_effects) > 0
             has_calls = len(func.calls) > 0
             
