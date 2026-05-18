@@ -67,6 +67,13 @@ def generate_html_report(html_path, output_dir=None, report=None):
 
     safe_html_file = html_escape(report.html_file)
 
+    main_cards_html = _generate_func_cards_html(main_funcs, icons, main_caller_index) if main_funcs else "<p><em>未偵測到主函式。所有函式皆歸類為常規腳本 (見「常規腳本」頁籤)。</em></p>"
+    ui_cards_html = _generate_func_cards_html(ui_funcs, icons, ui_caller_index) if ui_funcs else "<p><em>未偵測到純常規 UI 腳本。</em></p>"
+    if main_funcs:
+        flowchart_html = f'<pre id="mermaid-graph" style="display: none;">\n{mermaid_str}\n</pre><div id="mermaid-output"></div>'
+    else:
+        flowchart_html = '<p><em>無主函式呼叫關係可顯示。</em></p>'
+
     has_side_effects = any(f.side_effects for f in main_funcs.values())
     side_effect_count = sum(1 for f in main_funcs.values() if f.side_effects)
 
@@ -139,18 +146,18 @@ def generate_html_report(html_path, output_dir=None, report=None):
                 </div>
             </div>
             <h2>主函式詳細清單</h2>
-            {_generate_func_cards_html(main_funcs, icons, main_caller_index) if main_funcs else "<p><em>未偵測到主函式。所有函式皆歸類為常規腳本 (見「常規腳本」頁籤)。</em></p>"}
+            {main_cards_html}
         </div>
 
         <div id="tab-ui-scripts" class="tab-content">
             <h2>常規腳本 (UI/狀態操作)</h2>
             <p style="color: #6c757d;">此區塊列出僅包含內建方法 (如 <code>forEach</code>, <code>addEventListener</code>)，且無危險副作用的輔助函式。</p>
-            {_generate_func_cards_html(ui_funcs, icons, ui_caller_index) if ui_funcs else "<p><em>未偵測到純常規 UI 腳本。</em></p>"}
+            {ui_cards_html}
         </div>
 
         <div id="tab-flowchart" class="tab-content">
             <div class="mermaid-container">
-                {'<p><em>無主函式呼叫關係可顯示。</em></p>' if not main_funcs else f'<pre id="mermaid-graph" style="display: none;">\\n{mermaid_str}\\n</pre><div id="mermaid-output"></div>'}
+                {flowchart_html}
             </div>
         </div>
     </div>
